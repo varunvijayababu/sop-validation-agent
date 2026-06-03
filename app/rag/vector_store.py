@@ -4,7 +4,6 @@ from qdrant_client.models import (
     PointStruct
 )
 from app.rag.embedder import create_embedding
-from app.rag.chunker import chunk_text
 from app.rag.qdrant_client import client
 from app.rag.text_splitter import split_sections
 
