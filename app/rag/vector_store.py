@@ -6,6 +6,7 @@ from qdrant_client.models import (
 from app.rag.embedder import create_embedding
 from app.rag.chunker import chunk_text
 from app.rag.qdrant_client import client
+from app.rag.text_splitter import split_sections
 
 COLLECTION_NAME = "sop_reference_docs"
 
@@ -33,7 +34,13 @@ def store_document(text):
 
     create_collection()
 
-    chunks = chunk_text(text)
+    chunks = split_sections(text)
+
+    print("\nTOTAL CHUNKS:", len(chunks))
+
+    for i, chunk in enumerate(chunks):
+        print(f"\nCHUNK {i+1}")
+        print(chunk[:150])
 
     points = []
 
