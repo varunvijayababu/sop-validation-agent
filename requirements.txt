@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+python-docx
+pymupdf
+sentence-transformers
+qdrant-client
+groq
+python-dotenv
