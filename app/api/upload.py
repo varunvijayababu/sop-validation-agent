@@ -2,12 +2,20 @@ from fastapi import APIRouter
 from fastapi import UploadFile
 from fastapi import File
 
-from app.parser.pdf_parser import extract_pdf_text
-from app.parser.docx_parser import extract_docx_text
+from app.parser.pdf_parser import (
+    extract_pdf_pages
+)
+
+from app.parser.docx_to_pdf import (
+    convert_docx_to_pdf
+)
 
 from app.rag.vector_store import store_document
 
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -23,25 +31,118 @@ async def upload_standard(
     file: UploadFile = File(...)
 ):
 
-    file_path = os.path.join(
-        UPLOAD_DIR,
-        file.filename
+    logger.info(
+        f"Reference SOP upload received: {file.filename}"
     )
 
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
+    try:
 
-    if file.filename.endswith(".pdf"):
-        text = extract_pdf_text(file_path)
+        file_path = os.path.join(
+            UPLOAD_DIR,
+            file.filename
+        )
 
-    elif file.filename.endswith(".docx"):
-        text = extract_docx_text(file_path)
+        logger.info(
+            f"Saving uploaded file to: {file_path}"
+        )
 
-    else:
-        return {"error": "Unsupported file"}
+        with open(file_path, "wb") as f:
+            f.write(await file.read())
 
-    store_document(text)
+        if file.filename.endswith(".pdf"):
 
-    return {
-        "message": "Reference SOP uploaded"
-    }
+            logger.info(
+                "Detected PDF guideline"
+            )
+
+            pages = extract_pdf_pages(
+                file_path
+            )
+
+            logger.info(
+                f"Extracted {len(pages)} pages from PDF"
+            )
+
+            logger.info(
+                "Storing guideline chunks into Qdrant"
+            )
+
+            store_document(
+                pages
+            )
+
+            logger.info(
+                "Guideline stored successfully"
+            )
+
+            return {
+                "message": "Reference SOP uploaded"
+            }
+
+        elif file.filename.endswith(".docx"):
+
+            logger.info(
+                "Detected DOCX guideline"
+            )
+
+            pdf_path = file_path.replace(
+                ".docx",
+                ".pdf"
+            )
+
+            logger.info(
+                f"Converting DOCX to PDF: {pdf_path}"
+            )
+
+            convert_docx_to_pdf(
+                file_path,
+                pdf_path
+            )
+
+            logger.info(
+                "DOCX converted successfully"
+            )
+
+            pages = extract_pdf_pages(
+                pdf_path
+            )
+
+            logger.info(
+                f"Extracted {len(pages)} pages from converted PDF"
+            )
+
+            logger.info(
+                "Storing guideline chunks into Qdrant"
+            )
+
+            store_document(
+                pages
+            )
+
+            logger.info(
+                "Guideline stored successfully"
+            )
+
+            return {
+                "message": "Reference SOP uploaded"
+            }
+
+        else:
+
+            logger.warning(
+                f"Unsupported file type uploaded: {file.filename}"
+            )
+
+            return {
+                "error": "Unsupported file"
+            }
+
+    except Exception as e:
+
+        logger.exception(
+            f"Guideline upload failed: {str(e)}"
+        )
+
+        return {
+            "error": str(e)
+        }

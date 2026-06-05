@@ -1,12 +1,49 @@
 from fastapi import FastAPI
+
 from app.api.upload import router as upload_router
 from app.api.validate import router as validate_router
 
-app = FastAPI(title="SOP Validation Agent")
+import logging
+import os
+
+os.makedirs(
+    "logs",
+    exist_ok=True
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    handlers=[
+        logging.FileHandler("logs/app.log"),
+        logging.StreamHandler()
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
+logger.info(
+    "Starting SOP Validation Agent"
+)
+
+app = FastAPI(
+    title="SOP Validation Agent"
+)
 
 app.include_router(upload_router)
 app.include_router(validate_router)
 
+logger.info(
+    "Routers loaded successfully"
+)
+
 @app.get("/")
 def root():
-    return {"message": "SOP Validation Agent Running"}
+
+    logger.info(
+        "Health check endpoint called"
+    )
+
+    return {
+        "message": "SOP Validation Agent Running"
+    }

@@ -9,6 +9,9 @@ from app.rag.retriever import retrieve_context
 from app.agents.groq_validator import validate_sop
 
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -19,30 +22,94 @@ async def validate(
     file: UploadFile = File(...)
 ):
 
-    file_path = os.path.join(
-        UPLOAD_DIR,
-        file.filename
+    logger.info(
+        f"Validation request received: {file.filename}"
     )
 
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
+    try:
 
-    if file.filename.endswith(".pdf"):
-        sop_text = extract_pdf_text(file_path)
+        file_path = os.path.join(
+            UPLOAD_DIR,
+            file.filename
+        )
 
-    elif file.filename.endswith(".docx"):
-        sop_text = extract_docx_text(file_path)
+        logger.info(
+            f"Saving uploaded SOP to: {file_path}"
+        )
 
-    else:
-        return {"error": "Unsupported file"}
+        with open(file_path, "wb") as f:
+            f.write(await file.read())
 
-    reference_text = retrieve_context(
-        sop_text
-    )
+        if file.filename.endswith(".pdf"):
 
-    result = validate_sop(
-        sop_text,
-        reference_text
-    )
+            logger.info(
+                "Detected PDF SOP"
+            )
 
-    return result
+            sop_text = extract_pdf_text(
+                file_path
+            )
+
+        elif file.filename.endswith(".docx"):
+
+            logger.info(
+                "Detected DOCX SOP"
+            )
+
+            sop_text = extract_docx_text(
+                file_path
+            )
+
+        else:
+
+            logger.warning(
+                f"Unsupported file type: {file.filename}"
+            )
+
+            return {
+                "error": "Unsupported file"
+            }
+
+        logger.info(
+            f"SOP extracted successfully. Characters: {len(sop_text)}"
+        )
+
+        logger.info(
+            "Retrieving reference sections from Qdrant"
+        )
+
+        reference_text = retrieve_context(
+            sop_text
+        )
+
+        logger.info(
+            f"Retrieved {len(reference_text)} reference sections"
+        )
+
+        logger.info(
+            "Sending SOP and reference context to Groq validator"
+        )
+
+        result = validate_sop(
+            sop_text,
+            reference_text
+        )
+
+        logger.info(
+            "Validation completed successfully"
+        )
+
+        return result
+
+    except Exception as e:
+
+        logger.exception(
+            f"Validation failed: {str(e)}"
+        )
+
+        return [
+            {
+                "STATUS": "REJECT",
+                "COMMENTS": f"System Error: {str(e)}"
+            }
+        ]
