@@ -29,7 +29,7 @@ def retrieve_context(query):
         results = client.query_points(
             collection_name=COLLECTION_NAME,
             query=query_vector,
-            limit=5
+            limit=15
         )
 
         logger.info(

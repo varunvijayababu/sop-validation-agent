@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter
 from fastapi import UploadFile
 from fastapi import File
@@ -39,7 +41,7 @@ async def upload_standard(
 
         file_path = os.path.join(
             UPLOAD_DIR,
-            file.filename
+            f"{uuid.uuid4()}_{file.filename}"
         )
 
         logger.info(

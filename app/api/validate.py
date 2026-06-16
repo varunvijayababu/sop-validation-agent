@@ -1,9 +1,12 @@
+import uuid
+
 from fastapi import APIRouter
 from fastapi import UploadFile
 from fastapi import File
 
+from app.parser.docx_to_pdf import convert_docx_to_pdf
+
 from app.parser.pdf_parser import extract_pdf_text
-from app.parser.docx_parser import extract_docx_text
 
 from app.rag.retriever import retrieve_context
 from app.agents.groq_validator import validate_sop
@@ -30,7 +33,7 @@ async def validate(
 
         file_path = os.path.join(
             UPLOAD_DIR,
-            file.filename
+            f"{uuid.uuid4()}_{file.filename}"
         )
 
         logger.info(
@@ -52,14 +55,28 @@ async def validate(
 
         elif file.filename.endswith(".docx"):
 
+            pdf_path = file_path.replace(
+                ".docx",
+                ".pdf"
+            )
+
             logger.info(
-                "Detected DOCX SOP"
+                "Converting DOCX to PDF"
             )
 
-            sop_text = extract_docx_text(
-                file_path
+            logger.info(
+                f"PDF path: {pdf_path}"
             )
 
+            convert_docx_to_pdf(
+                file_path,
+                pdf_path
+            )
+
+            sop_text = extract_pdf_text(
+                pdf_path
+            )
+            
         else:
 
             logger.warning(
@@ -88,6 +105,10 @@ async def validate(
 
         logger.info(
             "Sending SOP and reference context to Groq validator"
+        )
+
+        logger.info(
+            f"SOP TEXT SENT TO GROQ:\n{sop_text}"
         )
 
         result = validate_sop(
