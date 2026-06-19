@@ -51,7 +51,9 @@ async def upload_standard(
         with open(file_path, "wb") as f:
             f.write(await file.read())
 
-        if file.filename.endswith(".pdf"):
+        filename = file.filename.lower()
+
+        if filename.endswith(".pdf"):
 
             logger.info(
                 "Detected PDF guideline"
@@ -63,10 +65,6 @@ async def upload_standard(
 
             logger.info(
                 f"Extracted {len(pages)} pages from PDF"
-            )
-
-            logger.info(
-                "Storing guideline chunks into Qdrant"
             )
 
             store_document(
@@ -81,7 +79,7 @@ async def upload_standard(
                 "message": "Reference SOP uploaded"
             }
 
-        elif file.filename.endswith(".docx"):
+        elif filename.endswith(".docx"):
 
             logger.info(
                 "Detected DOCX guideline"
@@ -113,10 +111,6 @@ async def upload_standard(
                 f"Extracted {len(pages)} pages from converted PDF"
             )
 
-            logger.info(
-                "Storing guideline chunks into Qdrant"
-            )
-
             store_document(
                 pages
             )
@@ -136,7 +130,7 @@ async def upload_standard(
             )
 
             return {
-                "error": "Unsupported file"
+                "error": "Only PDF and DOCX files are supported"
             }
 
     except Exception as e:

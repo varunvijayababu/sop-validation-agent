@@ -56,6 +56,14 @@ def split_sections(pages):
                     f"Characters: {len(section_text)}"
                 )
 
+                if not section_text:
+
+                    logger.warning(
+                        f"Skipping empty section: {section_title}"
+                    )
+
+                    continue
+
                 chunks.append(
                     {
                         "section": section_title,
@@ -63,6 +71,12 @@ def split_sections(pages):
                         "text": section_text
                     }
                 )
+
+        if len(chunks) == 0:
+
+            raise Exception(
+                "No sections found. Expected ### section headers."
+            )
 
         logger.info(
             f"Section splitting completed. Total chunks: {len(chunks)}"

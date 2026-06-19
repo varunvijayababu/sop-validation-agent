@@ -20,15 +20,7 @@ def create_embedding(text):
 
     try:
 
-        logger.info(
-            f"Generating embedding. Text length: {len(text)}"
-        )
-
         embedding = model.encode(text).tolist()
-
-        logger.info(
-            f"Embedding generated successfully. Vector size: {len(embedding)}"
-        )
 
         return embedding
 

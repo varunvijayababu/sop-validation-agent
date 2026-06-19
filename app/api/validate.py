@@ -43,7 +43,9 @@ async def validate(
         with open(file_path, "wb") as f:
             f.write(await file.read())
 
-        if file.filename.endswith(".pdf"):
+        filename = file.filename.lower()
+
+        if filename.endswith(".pdf"):
 
             logger.info(
                 "Detected PDF SOP"
@@ -53,7 +55,7 @@ async def validate(
                 file_path
             )
 
-        elif file.filename.endswith(".docx"):
+        elif filename.endswith(".docx"):
 
             pdf_path = file_path.replace(
                 ".docx",
@@ -62,10 +64,6 @@ async def validate(
 
             logger.info(
                 "Converting DOCX to PDF"
-            )
-
-            logger.info(
-                f"PDF path: {pdf_path}"
             )
 
             convert_docx_to_pdf(
@@ -84,9 +82,8 @@ async def validate(
             )
 
             return {
-                "error": "Unsupported file"
+                "error": "Only PDF and DOCX files are supported"
             }
-
         logger.info(
             f"SOP extracted successfully. Characters: {len(sop_text)}"
         )
@@ -95,12 +92,12 @@ async def validate(
             "Retrieving reference sections from Qdrant"
         )
 
-        reference_text = retrieve_context(
+        reference_sections = retrieve_context(
             sop_text
         )
 
         logger.info(
-            f"Retrieved {len(reference_text)} reference sections"
+            f"Retrieved {len(reference_sections)} reference sections"
         )
 
         logger.info(
@@ -108,12 +105,12 @@ async def validate(
         )
 
         logger.info(
-            f"SOP TEXT SENT TO GROQ:\n{sop_text}"
+            f"SOP text length sent to Groq: {len(sop_text)} characters"
         )
 
         result = validate_sop(
             sop_text,
-            reference_text
+            reference_sections
         )
 
         logger.info(

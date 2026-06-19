@@ -6,36 +6,80 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-logger.info(
-    "Loading BLIP image captioning model"
-)
+processor = None
+model = None
 
-processor = BlipProcessor.from_pretrained(
-    "Salesforce/blip-image-captioning-base"
-)
+def load_blip():
 
-model = BlipForConditionalGeneration.from_pretrained(
-    "Salesforce/blip-image-captioning-base"
-)
+    global processor
+    global model
 
-logger.info(
-    "BLIP model loaded successfully"
-)
+    try:
+
+        if processor is None:
+
+            logger.info(
+                "Loading BLIP processor"
+            )
+
+            processor = (
+                BlipProcessor.from_pretrained(
+                    "Salesforce/blip-image-captioning-base"
+                )
+            )
+
+        if model is None:
+
+            logger.info(
+                "Loading BLIP model"
+            )
+
+            model = (
+                BlipForConditionalGeneration
+                .from_pretrained(
+                    "Salesforce/blip-image-captioning-base"
+                )
+            )
+
+        logger.info(
+            "BLIP loaded successfully"
+        )
+
+        return True
+
+    except Exception as e:
+
+        logger.exception(
+            f"BLIP loading failed: {str(e)}"
+        )
+
+        return False
 
 
 def generate_image_caption(image_path):
 
     try:
+        
+        if not load_blip():
+
+            return (
+                "Image caption unavailable"
+            )
 
         logger.info(
             f"Generating caption for image: {image_path}"
         )
 
-        image = Image.open(
-            image_path
-        ).convert(
-            "RGB"
-        )
+        with Image.open(image_path) as image:
+
+            image = image.convert(
+                "RGB"
+            )
+
+            inputs = processor(
+                image,
+                return_tensors="pt"
+            )
 
         inputs = processor(
             image,
@@ -50,10 +94,6 @@ def generate_image_caption(image_path):
         caption = processor.decode(
             output[0],
             skip_special_tokens=True
-        )
-
-        logger.info(
-            f"Generated caption: {caption}"
         )
 
         return caption

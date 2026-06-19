@@ -30,8 +30,8 @@ app = FastAPI(
     title="SOP Validation Agent"
 )
 
-app.include_router(upload_router)
-app.include_router(validate_router)
+app.include_router(upload_router, tags=["Upload"])
+app.include_router(validate_router, tags=["Validation"])
 
 logger.info(
     "Routers loaded successfully"
@@ -39,10 +39,6 @@ logger.info(
 
 @app.get("/")
 def root():
-
-    logger.info(
-        "Health check endpoint called"
-    )
 
     return {
         "message": "SOP Validation Agent Running"

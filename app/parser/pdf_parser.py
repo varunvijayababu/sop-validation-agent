@@ -1,6 +1,7 @@
 import fitz
 import logging
 import os
+import uuid
 
 from app.parser.image_captioner import (
     generate_image_caption
@@ -36,7 +37,7 @@ def extract_pdf_pages(file_path: str):
 
         for page_num, page in enumerate(doc, start=1):
 
-            text = page.get_text()
+            text = page.get_text().strip()
 
             logger.info(
                 f"Extracted page {page_num} "
@@ -70,7 +71,7 @@ def extract_pdf_pages(file_path: str):
 
                     image_path = os.path.join(
                         image_dir,
-                        f"page_{page_num}_img_{image_index}.png"
+                        f"{uuid.uuid4()}.png"
                     )
 
                     if pix.n < 5:
@@ -102,13 +103,11 @@ def extract_pdf_pages(file_path: str):
                         image_path
                     )
 
-                    image_descriptions.append(
-                        caption
-                    )
+                    if caption:
 
-                    logger.info(
-                        f"Caption generated: {caption}"
-                    )
+                        image_descriptions.append(
+                            caption
+                        )
 
                 except Exception as image_error:
 
@@ -142,6 +141,8 @@ def extract_pdf_pages(file_path: str):
             f"PDF extraction completed. "
             f"Pages extracted: {len(pages)}"
         )
+
+        doc.close()
 
         return pages
 

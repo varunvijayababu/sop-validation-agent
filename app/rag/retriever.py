@@ -49,10 +49,23 @@ def retrieve_context(query):
                 f"(Page {page})"
             )
 
+            weight = point.payload.get(
+                "weight",
+                0
+            )
+
+            logger.info(
+                f"Result {idx + 1}: "
+                f"{section} "
+                f"(Page {page}) "
+                f"| Weight={weight}"
+            )
+
             retrieved_sections.append(
                 {
                     "section": section,
                     "page": page,
+                    "weight": weight,
                     "text": point.payload["text"]
                 }
             )

@@ -161,6 +161,82 @@ Before determining STATUS:
 3. Then evaluate SOP content.
 4. Include both findings in COMMENTS when applicable.
 
+SECTION COMPLIANCE EVALUATION RULES
+
+The reference SOP is divided into multiple sections.
+
+Each retrieved section represents one compliance requirement.
+
+For EVERY retrieved reference section:
+
+Determine whether the submitted SOP is:
+
+COMPLIANT
+- Requirement is adequately addressed.
+
+PARTIAL
+- Requirement is partially addressed.
+- Some required information is missing.
+- The section exists but does not fully satisfy the guideline requirements.
+- Related content is present, but important controls, responsibilities, procedures, monitoring requirements, documentation requirements, or implementation details are missing.
+- Any section that is present but incomplete MUST be classified as PARTIAL.
+
+MISSING
+- Requirement is absent.
+- The section cannot be identified in the SOP.
+- The section heading is absent and the corresponding content is not meaningfully addressed elsewhere.
+- Use MISSING only when the requirement is essentially absent.
+
+IMPORTANT
+
+Do NOT classify a section as MISSING if relevant content exists.
+
+If the section is present but incomplete:
+STATUS = PARTIAL
+
+If the section heading exists and contains meaningful content:
+STATUS = PARTIAL or COMPLIANT
+
+Never classify such sections as MISSING unless the content is effectively empty.
+
+IMPORTANT:
+
+Do NOT assign numeric scores.
+
+Do NOT calculate totals.
+
+Only classify each retrieved section as:
+
+COMPLIANT
+PARTIAL
+MISSING
+
+Image content should contribute only to the section it supports.
+
+Images are not scored separately.
+
+A section may be COMPLIANT through:
+
+- text
+- image
+- text + image
+
+If an image is irrelevant, mention it in COMMENTS but do not create a separate image score.
+
+IMPORTANT:
+
+You MUST evaluate EVERY retrieved reference section.
+
+For each retrieved reference section, create exactly one entry in SECTION_RESULTS.
+
+Do not omit sections.
+
+The number of SECTION_RESULTS entries must equal the number of retrieved reference sections.
+
+If a section cannot be identified in the SOP:
+
+STATUS = MISSING
+
 Decision Rules:
 
 ACCEPT:
@@ -209,7 +285,7 @@ A document that contains only short descriptions, summaries, or placeholders for
 
 Do NOT choose MODIFY unless you can identify a specific compliance gap.
 
-Do NOT choose REJECT unless multiple major requirements are missing.
+Do NOT choose REJECT unless multiple major requirements are missing. 
 
 When in doubt between ACCEPT and MODIFY, choose ACCEPT if all major requirements are present.
 
@@ -218,6 +294,10 @@ SOP COMPLETENESS RULE:
 A valid SOP must contain actionable procedures, responsibilities, controls, monitoring requirements, and implementation guidance.
 
 The existence of section headings alone does not satisfy a requirement.
+
+However, the existence of a section heading with meaningful content is strong evidence that the requirement is at least partially addressed.
+
+A section should not be classified as MISSING solely because it lacks some guideline requirements.
 
 If most sections contain only brief descriptive statements rather than operational procedures, the SOP should be classified as REJECT.
 
@@ -280,12 +360,43 @@ Policy and Compliance Expectations (Page 2)
 
 Roles and Responsibilities (Page 3)
 
+CLASSIFICATION PRIORITY
+
+When deciding between COMPLIANT, PARTIAL, and MISSING:
+
+1. Determine whether the section exists.
+2. If it exists but is incomplete:
+   PARTIAL
+3. If it exists and satisfies the guideline:
+   COMPLIANT
+4. Use MISSING only when the requirement is absent.
+
+When uncertain between PARTIAL and MISSING, choose PARTIAL if any meaningful related content exists.
+
+For introductory, scope, purpose, summary, and conclusion sections:
+
+If the section heading exists and contains meaningful content:
+
+STATUS = COMPLIANT or PARTIAL
+
+Do not classify these sections as MISSING unless the section is completely absent.
+
 Example ACCEPT:
 
 [
   {{
     "STATUS": "ACCEPT",
-    "COMMENTS": "The SOP comprehensively addresses the major IPC requirements defined in the reference guideline and demonstrates alignment with infection prevention, compliance, training, surveillance, and governance expectations.",
+    "SECTION_RESULTS": [
+      {{
+        "SECTION": "Purpose of an Infection Prevention and Control SOP",
+        "STATUS": "COMPLIANT"
+      }},
+      {{
+        "SECTION": "Policy and Compliance Expectations",
+        "STATUS": "COMPLIANT"
+      }}
+    ],
+    "COMMENTS": "The SOP comprehensively addresses the major IPC requirements defined in the reference guideline.",
     "REFERENCE": "Characteristics of a High-Quality IPC SOP (Page 6)"
   }}
 ]
@@ -295,6 +406,16 @@ Example MODIFY:
 [
   {{
     "STATUS": "MODIFY",
+    "SECTION_RESULTS": [
+      {{
+        "SECTION": "Purpose of an Infection Prevention and Control SOP",
+        "STATUS": "COMPLIANT"
+      }},
+      {{
+        "SECTION": "Risk Assessment and Infection Surveillance",
+        "STATUS": "PARTIAL"
+      }}
+    ],
     "COMMENTS": "The SOP does not sufficiently define notifiable disease reporting obligations and reporting timelines required by the guideline.",
     "REFERENCE": "Risk Assessment and Infection Surveillance (Page 4)"
   }}
@@ -305,6 +426,16 @@ Example REJECT:
 [
   {{
     "STATUS": "REJECT",
+    "SECTION_RESULTS": [
+      {{    
+        "SECTION": "Training and Competency Requirements",
+        "STATUS": "MISSING"
+      }},
+      {{
+        "SECTION": "Standard Infection Prevention Practices",
+        "STATUS": "MISSING"
+      }}
+    ],
     "COMMENTS": "The SOP omits key infection prevention controls including surveillance, training requirements, and biomedical waste management procedures.",
     "REFERENCE": "Standard Infection Prevention Practices (Page 3)"
   }}
@@ -315,10 +446,18 @@ Return ONLY valid JSON.
 [
     {{
         "STATUS": "MODIFY",
+        "SECTION_RESULTS": [
+            {{
+                "SECTION": "Section Name",
+                "STATUS": "COMPLIANT | PARTIAL | MISSING"
+            }}
+        ],
         "COMMENTS": "Reason",
         "REFERENCE": "Policy and Compliance Expectations (Page 2)"
     }}
 ]
+
+SECTION_RESULTS must contain one entry for every retrieved reference section.
 
 REFERENCE must exactly match one REFERENCE_ID shown above.
 
@@ -349,7 +488,7 @@ Return JSON only.
         result = response.choices[0].message.content
 
         logger.info(
-            f"Raw Groq response: {result}"
+            f"Groq response length: {len(result)} characters"
         )
 
         result = result.replace(
@@ -364,9 +503,147 @@ Return JSON only.
 
         parsed = json.loads(result)
 
+        if not isinstance(parsed, list):
+            raise Exception(
+                "Groq returned invalid format"
+            )
+
+        if len(parsed) == 0:
+            raise Exception(
+                "Groq returned empty response"
+            )
+
+        item = parsed[0]
+        
+        weight_map = {
+            section["section"]: section["weight"]
+            for section in reference_context
+        }
+
+        section_results = item.get(
+            "SECTION_RESULTS",
+            []
+        )
+
+        logger.info(
+            f"Groq returned {len(section_results)} section evaluations"
+        )
+
+        expected_sections = set(
+            weight_map.keys()
+        )
+
+        returned_sections = set(
+            s["SECTION"]
+            for s in section_results
+        )
+
+        missing_sections = (
+            expected_sections
+            - returned_sections
+        )
+
+        logger.info(
+            f"Sections missing from Groq response: "
+            f"{missing_sections}"
+        )
+
+        for missing_section in missing_sections:
+
+            section_results.append(
+                {
+                    "SECTION": missing_section,
+                    "STATUS": "MISSING"
+                }
+            )
+
+        logger.info(
+            f"Added {len(missing_sections)} "
+            f"missing sections as MISSING"
+        )
+
+        score = 0
+
+        score_breakdown = {}
+
+        for section in section_results:
+
+            section_name = section["SECTION"]
+
+            section_status = (
+                section["STATUS"]
+                .upper()
+                .strip()
+            )
+
+            section_weight = (
+                weight_map.get(
+                    section_name,
+                    0
+                )
+            )
+
+            if section_status == "COMPLIANT":
+
+                section_score = (
+                    section_weight
+                )
+
+            elif section_status == "PARTIAL":
+
+                section_score = (
+                    section_weight * 0.5
+                )
+
+            else:
+
+                section_score = 0
+
+            score += section_score
+
+            score_breakdown[
+                section_name
+            ] = {
+
+                "STATUS": section_status,
+
+                "WEIGHT": section_weight,
+
+                "SCORE": round(
+                    section_score,
+                    2
+                )
+            }
+
+        max_possible_score = sum(
+            weight_map.values()
+        )
+
+        if max_possible_score == 0:
+            final_score = 0
+        else:
+            final_score = (
+                score / max_possible_score
+            ) * 100
+
+        item["SCORE"] = round(
+            final_score,
+            2
+        )
+
         logger.info(
             "JSON parsed successfully"
         )
+
+        logger.info(
+            f"Calculated Score: {item['SCORE']}"
+        )
+
+        logger.info(
+            f"Section Breakdown: {score_breakdown}"
+        )
+        
+        item["SCORE_BREAKDOWN"] = score_breakdown
 
         return parsed
 

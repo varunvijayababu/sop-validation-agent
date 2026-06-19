@@ -1,3 +1,7 @@
+from app.rag.section_ranker import (
+    rank_sections
+)
+
 from qdrant_client.models import (
     Distance,
     VectorParams,
@@ -64,18 +68,46 @@ def store_document(pages):
         create_collection()
 
         chunks = split_sections(pages)
+        
+        logger.info(
+            "Generating section weights"
+        )
+
+        section_weights = rank_sections(
+            chunks
+        )
+
+        weight_map = {
+            item["section"]: item["weight"]
+            for item in section_weights
+        }
+
+        for chunk in chunks:
+
+            if chunk["section"] not in weight_map:
+                raise Exception(
+                    f"Weight missing for section: {chunk['section']}"
+                )
+
+            logger.info(
+                f"Chunk {i+1}: "
+                f"{chunk['section']} "
+                f"(Page {chunk['page']}) "
+                f"| Weight={chunk['weight']}%"
+            )
+        
+        total_weight = sum(
+            chunk["weight"]
+            for chunk in chunks
+        )
+
+        logger.info(
+            f"FINAL STORED WEIGHT TOTAL: {total_weight}"
+        )
 
         logger.info(
             f"Total chunks generated: {len(chunks)}"
         )
-
-        for i, chunk in enumerate(chunks):
-
-            logger.info(
-                f"Chunk {i + 1}: "
-                f"{chunk['section']} "
-                f"(Page {chunk['page']})"
-            )
 
         points = []
 
@@ -96,7 +128,8 @@ def store_document(pages):
                     payload={
                         "text": chunk["text"],
                         "section": chunk["section"],
-                        "page": chunk["page"]
+                        "page": chunk["page"],
+                        "weight": chunk["weight"]
                     }
                 )
             )

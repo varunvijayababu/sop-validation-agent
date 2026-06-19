@@ -1,12 +1,7 @@
 from qdrant_client import QdrantClient
-from dotenv import load_dotenv
-
-import os
 import logging
 
 logger = logging.getLogger(__name__)
-
-load_dotenv()
 
 try:
 
