@@ -18,7 +18,35 @@ logger.info(
 )
 
 
-def validate_sop(sop_text, reference_context):
+from functools import lru_cache
+import copy
+
+def _make_hashable_context(reference_context):
+    items = []
+    for item in reference_context:
+        items.append((
+            item.get("section", ""),
+            item.get("page", 0),
+            item.get("weight", 0.0),
+            item.get("text", "")
+        ))
+    return tuple(sorted(items, key=lambda x: (x[0], x[1])))
+
+@lru_cache(maxsize=128)
+def _cached_validate_sop_internal(sop_text, hashable_context):
+    prompt_tokens = 0
+    completion_tokens = 0
+    total_tokens = 0
+
+    reference_context = [
+        {
+            "section": item[0],
+            "page": item[1],
+            "weight": item[2],
+            "text": item[3]
+        }
+        for item in hashable_context
+    ]
 
     try:
 
@@ -485,6 +513,11 @@ Return JSON only.
             "Groq response received"
         )
 
+        if hasattr(response, "usage") and response.usage:
+            prompt_tokens = getattr(response.usage, "prompt_tokens", 0)
+            completion_tokens = getattr(response.usage, "completion_tokens", 0)
+            total_tokens = getattr(response.usage, "total_tokens", 0)
+
         result = response.choices[0].message.content
 
         logger.info(
@@ -562,7 +595,9 @@ Return JSON only.
             f"missing sections as MISSING"
         )
 
-        score = 0
+        max_possible_score = sum(
+            weight_map.values()
+        )
 
         score_breakdown = {}
 
@@ -599,7 +634,11 @@ Return JSON only.
 
                 section_score = 0
 
-            score += section_score
+            # Calculate the section's contribution to the overall score (normalized)
+            if max_possible_score == 0:
+                normalized_score = 0.0
+            else:
+                normalized_score = (section_score / max_possible_score) * 100
 
             score_breakdown[
                 section_name
@@ -610,26 +649,14 @@ Return JSON only.
                 "WEIGHT": section_weight,
 
                 "SCORE": round(
-                    section_score,
+                    normalized_score,
                     2
                 )
             }
 
-        max_possible_score = sum(
-            weight_map.values()
-        )
-
-        if max_possible_score == 0:
-            final_score = 0
-        else:
-            final_score = (
-                score / max_possible_score
-            ) * 100
-
-        item["SCORE"] = round(
-            final_score,
-            2
-        )
+        # Calculate final overall SCORE as the sum of rounded section scores
+        final_score = sum(info["SCORE"] for info in score_breakdown.values())
+        item["SCORE"] = round(final_score, 2)
 
         logger.info(
             "JSON parsed successfully"
@@ -642,8 +669,57 @@ Return JSON only.
         logger.info(
             f"Section Breakdown: {score_breakdown}"
         )
-        
+
         item["SCORE_BREAKDOWN"] = score_breakdown
+
+        item["TOKEN_COUNT"] = {
+            "INPUT": prompt_tokens,
+            "OUTPUT": completion_tokens,
+            "TOTAL": total_tokens or (prompt_tokens + completion_tokens)
+        }
+
+        return parsed
+
+    except json.JSONDecodeError as e:
+
+        logger.exception(
+            f"JSON parsing failed inside cached: {str(e)}"
+        )
+        raise
+
+    except Exception as e:
+
+        logger.exception(
+            f"Groq validation failed inside cached: {str(e)}"
+        )
+        raise
+
+
+def validate_sop(sop_text, reference_context, detailed=False):
+    try:
+        hashable_context = _make_hashable_context(reference_context)
+        cached_parsed = _cached_validate_sop_internal(sop_text, hashable_context)
+
+        parsed = copy.deepcopy(cached_parsed)
+        item = parsed[0]
+
+        if detailed:
+            formatted_item = {
+                "STATUS": item.get("STATUS"),
+                "SCORE": item.get("SCORE"),
+                "SCORE_BREAKDOWN": item.get("SCORE_BREAKDOWN"),
+                "COMMENTS": item.get("COMMENTS"),
+                "REFERENCE": item.get("REFERENCE"),
+                "TOKEN_COUNT": item.get("TOKEN_COUNT")
+            }
+        else:
+            formatted_item = {
+                "STATUS": item.get("STATUS"),
+                "SCORE": item.get("SCORE"),
+                "COMMENTS": item.get("COMMENTS"),
+                "REFERENCE": item.get("REFERENCE")
+            }
+        parsed[0] = formatted_item
 
         return parsed
 
@@ -653,13 +729,30 @@ Return JSON only.
             f"JSON parsing failed: {str(e)}"
         )
 
-        return [
-            {
-                "STATUS": "SYSTEM_ERROR",
-                "COMMENTS": f"JSON Parsing Error: {str(e)}",
-                "REFERENCE": "Validation System (Page N/A)"
-            }
-        ]
+        if detailed:
+            return [
+                {
+                    "STATUS": "SYSTEM_ERROR",
+                    "SCORE": 0.0,
+                    "SCORE_BREAKDOWN": {},
+                    "COMMENTS": f"JSON Parsing Error: {str(e)}",
+                    "REFERENCE": "Validation System (Page N/A)",
+                    "TOKEN_COUNT": {
+                        "INPUT": 0,
+                        "OUTPUT": 0,
+                        "TOTAL": 0
+                    }
+                }
+            ]
+        else:
+            return [
+                {
+                    "STATUS": "SYSTEM_ERROR",
+                    "SCORE": 0.0,
+                    "COMMENTS": f"JSON Parsing Error: {str(e)}",
+                    "REFERENCE": "Validation System (Page N/A)"
+                }
+            ]
 
     except Exception as e:
 
@@ -674,33 +767,37 @@ Return JSON only.
             or "Rate limit reached" in error_text
             or "429" in error_text
         ):
-
-            return [
-                {
-                    "STATUS": "SYSTEM_ERROR",
-                    "COMMENTS": "Groq API rate limit reached. Please retry later.",
-                    "REFERENCE": "System Error (Page N/A)"
-                }
-            ]
-
-        if (
+            comments = "Groq API rate limit reached. Please retry later."
+        elif (
             "Request too large" in error_text
             or "413" in error_text
             or "tokens per minute" in error_text
         ):
+            comments = "Validation request exceeds model token limits. Reduce SOP size or retrieved context."
+        else:
+            comments = f"Validation Error: {error_text}"
 
+        if detailed:
             return [
                 {
                     "STATUS": "SYSTEM_ERROR",
-                    "COMMENTS": "Validation request exceeds model token limits. Reduce SOP size or retrieved context.",
+                    "SCORE": 0.0,
+                    "SCORE_BREAKDOWN": {},
+                    "COMMENTS": comments,
+                    "REFERENCE": "System Error (Page N/A)",
+                    "TOKEN_COUNT": {
+                        "INPUT": 0,
+                        "OUTPUT": 0,
+                        "TOTAL": 0
+                    }
+                }
+            ]
+        else:
+            return [
+                {
+                    "STATUS": "SYSTEM_ERROR",
+                    "SCORE": 0.0,
+                    "COMMENTS": comments,
                     "REFERENCE": "System Error (Page N/A)"
                 }
             ]
-
-        return [
-            {
-                "STATUS": "SYSTEM_ERROR",
-                "COMMENTS": f"Validation Error: {error_text}",
-                "REFERENCE": "System Error (Page N/A)"
-            }
-        ]

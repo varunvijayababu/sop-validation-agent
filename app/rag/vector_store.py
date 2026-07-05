@@ -82,15 +82,19 @@ def store_document(pages):
             for item in section_weights
         }
 
-        for chunk in chunks:
+        for idx, chunk in enumerate(chunks):
 
             if chunk["section"] not in weight_map:
                 raise Exception(
                     f"Weight missing for section: {chunk['section']}"
                 )
 
+            chunk["weight"] = weight_map[
+                chunk["section"]
+            ]
+
             logger.info(
-                f"Chunk {i+1}: "
+                f"Chunk {idx + 1}: "
                 f"{chunk['section']} "
                 f"(Page {chunk['page']}) "
                 f"| Weight={chunk['weight']}%"
