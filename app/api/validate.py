@@ -9,7 +9,7 @@ from app.parser.docx_to_pdf import convert_docx_to_pdf
 from app.parser.pdf_parser import extract_pdf_text
 
 from app.rag.retriever import retrieve_context
-from app.agents.groq_validator import validate_sop
+from app.agents.llm_validator import validate_sop
 
 import os
 import logging
@@ -101,11 +101,11 @@ async def validate(
         )
 
         logger.info(
-            "Sending SOP and reference context to Groq validator"
+            "Sending SOP and reference context to LLM validator"
         )
 
         logger.info(
-            f"SOP text length sent to Groq: {len(sop_text)} characters"
+            f"SOP text length sent to LLM: {len(sop_text)} characters"
         )
 
         result = validate_sop(
@@ -216,11 +216,11 @@ async def validate_detailed(
         )
 
         logger.info(
-            "Sending SOP and reference context to Groq validator"
+            "Sending SOP and reference context to LLM validator"
         )
 
         logger.info(
-            f"SOP text length sent to Groq: {len(sop_text)} characters"
+            f"SOP text length sent to LLM: {len(sop_text)} characters"
         )
 
         result = validate_sop(

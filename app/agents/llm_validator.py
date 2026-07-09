@@ -1,25 +1,161 @@
 import os
 import json
 import logging
+import re
 
-from groq import Groq
 from dotenv import load_dotenv
+from app.llm.factory import get_llm_provider
 
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-client = Groq(
-    api_key=os.getenv("GROQ_API_KEY")
-)
-
 logger.info(
-    "Groq client initialized"
+    "LLM validator module loaded"
 )
 
 
 from functools import lru_cache
 import copy
+
+class ValidationRetryFailedError(Exception):
+    """Custom exception raised when validation fails after retries, carrying token usage."""
+    def __init__(self, message, token_count):
+        super().__init__(message)
+        self.token_count = token_count
+
+
+def _normalize_section_status(status_str: str) -> str:
+    """Normalize section status case-insensitively and trim whitespace to canonical values."""
+    cleaned = status_str.upper().strip()
+    if cleaned == "COMPLETE":
+        return "COMPLIANT"
+    if cleaned == "INCOMPLETE":
+        return "PARTIAL"
+    return cleaned
+
+
+def _extract_json_string(text: str) -> str:
+    text_stripped = text.strip()
+    first_bracket = text_stripped.find('[')
+    first_brace = text_stripped.find('{')
+    
+    if first_bracket != -1 and first_brace != -1:
+        start_idx = min(first_bracket, first_brace)
+    elif first_bracket != -1:
+        start_idx = first_bracket
+    elif first_brace != -1:
+        start_idx = first_brace
+    else:
+        return text_stripped
+        
+    last_bracket = text_stripped.rfind(']')
+    last_brace = text_stripped.rfind('}')
+    
+    if last_bracket != -1 and last_brace != -1:
+        end_idx = max(last_bracket, last_brace)
+    elif last_bracket != -1:
+        end_idx = last_bracket
+    elif last_brace != -1:
+        end_idx = last_brace
+    else:
+        return text_stripped
+        
+    return text_stripped[start_idx:end_idx + 1]
+
+
+def _normalize_strict(s: str) -> str:
+    s = s.lower().strip()
+    s = re.sub(r'[^\w\s]', '', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
+
+def _resolve_section(sec_val: str, reference_context) -> str:
+    valid_sections = {sec["section"] for sec in reference_context}
+    
+    # 1. Exact match
+    if sec_val in valid_sections:
+        return sec_val
+        
+    # 2. Case-insensitive exact match
+    sec_val_lower = sec_val.lower().strip()
+    ci_matches = [s for s in valid_sections if s.lower().strip() == sec_val_lower]
+    if len(ci_matches) == 1:
+        return ci_matches[0]
+    elif len(ci_matches) > 1:
+        raise ValueError(f"Ambiguous section name (case-insensitive): '{sec_val}'")
+        
+    # 3. Whitespace & Punctuation normalized match
+    norm_val = _normalize_strict(sec_val)
+    norm_matches = [s for s in valid_sections if _normalize_strict(s) == norm_val]
+    if len(norm_matches) == 1:
+        return norm_matches[0]
+    elif len(norm_matches) > 1:
+        raise ValueError(f"Ambiguous section name (normalized): '{sec_val}'")
+        
+    # 4. Strip trailing page suffix and retry resolution steps 1-3
+    clean_sec = re.sub(r'\s*\(?p(age|\.)?\s*\d+\)?\s*$', '', sec_val, flags=re.IGNORECASE).strip()
+    if clean_sec != sec_val:
+        # Exact match of clean title
+        if clean_sec in valid_sections:
+            return clean_sec
+        # Case-insensitive
+        clean_sec_lower = clean_sec.lower().strip()
+        ci_matches = [s for s in valid_sections if s.lower().strip() == clean_sec_lower]
+        if len(ci_matches) == 1:
+            return ci_matches[0]
+        elif len(ci_matches) > 1:
+            raise ValueError(f"Ambiguous section name after page suffix strip (case-insensitive): '{sec_val}'")
+        # Whitespace/punctuation normalized
+        norm_clean = _normalize_strict(clean_sec)
+        norm_matches = [s for s in valid_sections if _normalize_strict(s) == norm_clean]
+        if len(norm_matches) == 1:
+            return norm_matches[0]
+        elif len(norm_matches) > 1:
+            raise ValueError(f"Ambiguous section name after page suffix strip (normalized): '{sec_val}'")
+            
+    raise ValueError(f"Invalid section name: '{sec_val}'")
+
+def _resolve_reference(ref_val: str, reference_context) -> str:
+    valid_references = {f"{sec['section']} (Page {sec['page']})" for sec in reference_context}
+    
+    # 1. Exact match
+    if ref_val in valid_references:
+        return ref_val
+        
+    # 2. Case-insensitive exact match
+    ref_val_lower = ref_val.lower().strip()
+    ci_matches = [r for r in valid_references if r.lower().strip() == ref_val_lower]
+    if len(ci_matches) == 1:
+        return ci_matches[0]
+    elif len(ci_matches) > 1:
+        raise ValueError(f"Ambiguous reference (case-insensitive): '{ref_val}'")
+        
+    # 3. Whitespace & Punctuation normalized match
+    norm_val = _normalize_strict(ref_val)
+    norm_matches = [r for r in valid_references if _normalize_strict(r) == norm_val]
+    if len(norm_matches) == 1:
+        return norm_matches[0]
+    elif len(norm_matches) > 1:
+        raise ValueError(f"Ambiguous reference (normalized): '{ref_val}'")
+        
+    # 4. Strip trailing page suffix and attempt to match unique section title
+    clean_ref = re.sub(r'\s*\(?p(age|\.)?\s*\d+\)?\s*$', '', ref_val, flags=re.IGNORECASE).strip()
+    
+    try:
+        resolved_sec = _resolve_section(clean_ref, reference_context)
+        matching_refs = [f"{sec['section']} (Page {sec['page']})" 
+                         for sec in reference_context if sec["section"] == resolved_sec]
+        if len(matching_refs) == 1:
+            return matching_refs[0]
+        elif len(matching_refs) > 1:
+            raise ValueError(f"Ambiguous reference mapping for section: '{resolved_sec}'")
+    except ValueError as e:
+        if "Ambiguous" in str(e):
+            raise
+        
+    raise ValueError(f"Invalid reference: '{ref_val}'")
+
 
 def _make_hashable_context(reference_context):
     items = []
@@ -81,6 +217,8 @@ CONTENT:
         logger.info(
             f"SOP length: {len(sop_text)} characters"
         )
+
+        checklist_items = "\n".join(f"* {sec['section']}" for sec in reference_context)
 
         prompt = f"""
 You are an SOP validation agent.
@@ -469,84 +607,202 @@ Example REJECT:
   }}
 ]
 
-Return ONLY valid JSON.
+Return ONLY a valid JSON list containing exactly one object.
+Do not return any explanations, markdown fences, or prefix/suffix prose.
 
+CRITICAL RULES:
+1. Top-level "STATUS" must be exactly "ACCEPT", "MODIFY", or "REJECT".
+2. Example placeholders (such as "Section Name" or "Reason") must NEVER be copied or used in your output. You must use actual section titles from REFERENCE_ID and provide real audit findings in COMMENTS.
+3. "SECTION_RESULTS" must contain exactly one entry for every retrieved reference section. Specifically, you MUST include the following sections:
+{checklist_items}
+4. Each entry in "SECTION_RESULTS" must have a "SECTION" copying the retrieved section title EXACTLY. Do not paraphrase, summarize, or rename section titles. "STATUS" must be exactly "COMPLIANT", "PARTIAL", or "MISSING".
+5. "REFERENCE" must copy one of the shown REFERENCE_ID values EXACTLY (including the exact section title and page suffix). Do not paraphrase, summarize, or rename references.
+
+JSON Schema format:
 [
-    {{
-        "STATUS": "MODIFY",
-        "SECTION_RESULTS": [
-            {{
-                "SECTION": "Section Name",
-                "STATUS": "COMPLIANT | PARTIAL | MISSING"
-            }}
-        ],
-        "COMMENTS": "Reason",
-        "REFERENCE": "Policy and Compliance Expectations (Page 2)"
-    }}
+  {{
+    "STATUS": "ACCEPT | MODIFY | REJECT",
+    "SECTION_RESULTS": [
+      {{
+        "SECTION": "Actual Section Title from Reference guidelines",
+        "STATUS": "COMPLIANT | PARTIAL | MISSING"
+      }}
+    ],
+    "COMMENTS": "Your specific audit comments here",
+    "REFERENCE": "Exact Section Title (Page X) matching the most critical reference"
+  }}
 ]
-
-SECTION_RESULTS must contain one entry for every retrieved reference section.
-
-REFERENCE must exactly match one REFERENCE_ID shown above.
-
-Do not return markdown.
-Do not return explanations.
-Return JSON only.
 """
 
-        logger.info(
-            "Sending request to Groq"
-        )
+        from app.llm.config import LLM_PROVIDER
+        is_ollama = (LLM_PROVIDER.lower().strip() == "ollama")
+        max_attempts = 2 if is_ollama else 1
 
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0
-        )
+        messages = [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
 
-        logger.info(
-            "Groq response received"
-        )
+        llm = get_llm_provider()
+        provider_name = llm.name
 
-        if hasattr(response, "usage") and response.usage:
-            prompt_tokens = getattr(response.usage, "prompt_tokens", 0)
-            completion_tokens = getattr(response.usage, "completion_tokens", 0)
-            total_tokens = getattr(response.usage, "total_tokens", 0)
+        response = None
+        for attempt in range(1, max_attempts + 1):
+            llm_call_success = False
+            try:
+                try:
+                    logger.info(
+                        f"Sending request to LLM provider (attempt {attempt}/{max_attempts})"
+                    )
+                    response = llm.generate(messages=messages, temperature=0.0)
+                    llm_call_success = True
+                except Exception as e:
+                    # LLM invocation failure (connection, API error, etc.) - fail immediately
+                    raise e
 
-        result = response.choices[0].message.content
+                prompt_tokens += response.token_usage.get("INPUT", 0)
+                completion_tokens += response.token_usage.get("OUTPUT", 0)
+                total_tokens += response.token_usage.get("TOTAL", 0)
 
-        logger.info(
-            f"Groq response length: {len(result)} characters"
-        )
+                result = response.content
+                logger.info(
+                    f"LLM response length: {len(result)} characters"
+                )
 
-        result = result.replace(
-            "```json",
-            ""
-        )
+                result = result.replace("```json", "")
+                result = result.replace("```", "").strip()
 
-        result = result.replace(
-            "```",
-            ""
-        ).strip()
+                # Extract JSON from potential narrative wrappers
+                result = _extract_json_string(result)
 
-        parsed = json.loads(result)
+                if not result:
+                    raise json.JSONDecodeError(
+                        "Model returned an empty or whitespace-only response",
+                        result,
+                        0
+                    )
 
-        if not isinstance(parsed, list):
-            raise Exception(
-                "Groq returned invalid format"
-            )
+                parsed = json.loads(result)
 
-        if len(parsed) == 0:
-            raise Exception(
-                "Groq returned empty response"
-            )
+                # Normalize JSON object output to single-item list format
+                if isinstance(parsed, dict):
+                    parsed = [parsed]
 
-        item = parsed[0]
+                if not isinstance(parsed, list):
+                    raise Exception(f"{provider_name} returned invalid format")
+
+                if len(parsed) == 0:
+                    raise Exception(f"{provider_name} returned empty response")
+
+                item = parsed[0]
+
+                # 1. Validate top-level STATUS is exactly ACCEPT, MODIFY, or REJECT
+                status = item.get("STATUS")
+                if not isinstance(status, str) or status.upper().strip() not in {"ACCEPT", "MODIFY", "REJECT"}:
+                    raise Exception(f"Invalid top-level STATUS: {status}")
+                item["STATUS"] = status.upper().strip()
+
+                # 2. Validate COMMENTS is a non-empty string
+                comments = item.get("COMMENTS")
+                if not isinstance(comments, str) or not comments.strip():
+                    raise Exception("COMMENTS must be a non-empty string")
+                if comments.strip() in {"Reason", "Your reason here", "Brief explanation"}:
+                    raise Exception(f"Placeholder COMMENTS detected: '{comments}'")
+
+                # 3. Validate and resolve REFERENCE using strict resolver
+                reference_val = item.get("REFERENCE")
+                if not isinstance(reference_val, str) or not reference_val.strip():
+                    raise Exception("REFERENCE must be a non-empty string")
+                try:
+                    resolved_reference = _resolve_reference(reference_val.strip(), reference_context)
+                    item["REFERENCE"] = resolved_reference
+                except ValueError as e:
+                    raise Exception(f"Invalid REFERENCE '{reference_val}': {str(e)}")
+
+                # 4. Validate SECTION_RESULTS is valid list
+                section_results = item.get("SECTION_RESULTS", [])
+                if not isinstance(section_results, list):
+                    raise Exception("SECTION_RESULTS must be a list")
+
+                resolved_section_results = []
+                for sec_res in section_results:
+                    if not isinstance(sec_res, dict):
+                        raise Exception("Each entry in SECTION_RESULTS must be an object")
+                    sec_name = sec_res.get("SECTION")
+                    sec_status = sec_res.get("STATUS")
+                    if not isinstance(sec_name, str) or not sec_name.strip():
+                        raise Exception("SECTION name must be a non-empty string")
+                    if sec_name.strip() in {"Section Name", "SOP Section Name"}:
+                        raise Exception(f"Placeholder SECTION name detected: '{sec_name}'")
+                    if not isinstance(sec_status, str):
+                        raise Exception(f"Invalid section STATUS: {sec_status}")
+                    sec_status_normalized = _normalize_section_status(sec_status)
+                    if sec_status_normalized not in {"COMPLIANT", "PARTIAL", "MISSING"}:
+                        raise Exception(f"Invalid section STATUS: {sec_status}")
+                    
+                    # Resolve section name using strict resolver
+                    try:
+                        resolved_sec_name = _resolve_section(sec_name.strip(), reference_context)
+                    except ValueError as e:
+                        raise Exception(f"Section name '{sec_name}' could not be resolved: {str(e)}")
+                        
+                    resolved_section_results.append({
+                        "SECTION": resolved_sec_name,
+                        "STATUS": sec_status_normalized
+                    })
+                    
+                item["SECTION_RESULTS"] = resolved_section_results
+
+                # Enforce strict section completeness for Ollama
+                if is_ollama:
+                    if len(resolved_section_results) != len(reference_context):
+                        raise ValueError(
+                            f"Ollama returned {len(resolved_section_results)} section results, "
+                            f"but expected {len(reference_context)}."
+                        )
+
+                # Successfully validated. Break loop.
+                break
+
+            except (json.JSONDecodeError, Exception, ValueError) as e:
+                if not llm_call_success:
+                    raise e
+                if is_ollama:
+                    if attempt == 1:
+                        logger.warning(
+                            f"Ollama validation failed on attempt 1: {str(e)}. "
+                            f"Retrying with correction prompt..."
+                        )
+                        expected_count = len(reference_context)
+                        section_titles = [sec["section"] for sec in reference_context]
+                        correction_prompt = (
+                            f"Validation failed: {str(e)}\n"
+                            f"You MUST evaluate every single retrieved reference section.\n"
+                            f"Expected count of retrieved sections: {expected_count}\n"
+                            f"The exact retrieved section titles are:\n"
+                            + "\n".join(f"- {title}" for title in section_titles) + "\n"
+                            f"Omitting any section is invalid. You MUST return exactly one entry per section in SECTION_RESULTS."
+                        )
+                        assistant_content = response.content if response else ""
+                        messages.append({
+                            "role": "assistant",
+                            "content": assistant_content
+                        })
+                        messages.append({
+                            "role": "user",
+                            "content": correction_prompt
+                        })
+                    else:
+                        e.token_count = {
+                            "INPUT": prompt_tokens,
+                            "OUTPUT": completion_tokens,
+                            "TOTAL": total_tokens or (prompt_tokens + completion_tokens)
+                        }
+                        raise e
+                else:
+                    raise
         
         weight_map = {
             section["section"]: section["weight"]
@@ -559,7 +815,7 @@ Return JSON only.
         )
 
         logger.info(
-            f"Groq returned {len(section_results)} section evaluations"
+            f"{provider_name} returned {len(section_results)} section evaluations"
         )
 
         expected_sections = set(
@@ -577,7 +833,7 @@ Return JSON only.
         )
 
         logger.info(
-            f"Sections missing from Groq response: "
+            f"Sections missing from {provider_name} response: "
             f"{missing_sections}"
         )
 
@@ -689,14 +945,64 @@ Return JSON only.
 
     except Exception as e:
 
+        from app.llm.config import LLM_PROVIDER
+        provider_map = {
+            "groq": "Groq",
+            "openai": "OpenAI",
+            "gemini": "Gemini",
+            "ollama": "Ollama"
+        }
+        raw_provider = LLM_PROVIDER.strip() if LLM_PROVIDER else ""
+        provider_name = provider_map.get(raw_provider.lower(), raw_provider.capitalize() if raw_provider else "LLM")
         logger.exception(
-            f"Groq validation failed inside cached: {str(e)}"
+            f"{provider_name} validation failed inside cached: {str(e)}"
         )
         raise
 
 
 def validate_sop(sop_text, reference_context, detailed=False):
+    from app.llm.config import LLM_PROVIDER
+    provider_map = {
+        "groq": "Groq",
+        "openai": "OpenAI",
+        "gemini": "Gemini",
+        "ollama": "Ollama"
+    }
+    raw_provider = LLM_PROVIDER.strip() if LLM_PROVIDER else ""
+    provider_name = provider_map.get(raw_provider.lower(), raw_provider.capitalize() if raw_provider else "LLM")
+
     try:
+        # Lazy client instantiation to catch provider setup errors gracefully
+        try:
+            llm = get_llm_provider()
+        except Exception as e:
+            logger.exception(f"Failed to instantiate LLM provider {provider_name}: {str(e)}")
+            comments = f"{provider_name} request failed: {str(e)}"
+            if detailed:
+                return [
+                    {
+                        "STATUS": "SYSTEM_ERROR",
+                        "SCORE": 0.0,
+                        "SCORE_BREAKDOWN": {},
+                        "COMMENTS": comments,
+                        "REFERENCE": "System Error (Page N/A)",
+                        "TOKEN_COUNT": {
+                            "INPUT": 0,
+                            "OUTPUT": 0,
+                            "TOTAL": 0
+                        }
+                    }
+                ]
+            else:
+                return [
+                    {
+                        "STATUS": "SYSTEM_ERROR",
+                        "SCORE": 0.0,
+                        "COMMENTS": comments,
+                        "REFERENCE": "System Error (Page N/A)"
+                    }
+                ]
+
         hashable_context = _make_hashable_context(reference_context)
         cached_parsed = _cached_validate_sop_internal(sop_text, hashable_context)
 
@@ -729,6 +1035,12 @@ def validate_sop(sop_text, reference_context, detailed=False):
             f"JSON parsing failed: {str(e)}"
         )
 
+        token_count = getattr(e, "token_count", {
+            "INPUT": 0,
+            "OUTPUT": 0,
+            "TOTAL": 0
+        })
+
         if detailed:
             return [
                 {
@@ -737,11 +1049,7 @@ def validate_sop(sop_text, reference_context, detailed=False):
                     "SCORE_BREAKDOWN": {},
                     "COMMENTS": f"JSON Parsing Error: {str(e)}",
                     "REFERENCE": "Validation System (Page N/A)",
-                    "TOKEN_COUNT": {
-                        "INPUT": 0,
-                        "OUTPUT": 0,
-                        "TOTAL": 0
-                    }
+                    "TOKEN_COUNT": token_count
                 }
             ]
         else:
@@ -757,25 +1065,25 @@ def validate_sop(sop_text, reference_context, detailed=False):
     except Exception as e:
 
         logger.exception(
-            f"Groq validation failed: {str(e)}"
+            f"{provider_name} validation failed: {str(e)}"
         )
 
         error_text = str(e)
 
-        if (
-            "rate_limit_exceeded" in error_text
-            or "Rate limit reached" in error_text
-            or "429" in error_text
-        ):
-            comments = "Groq API rate limit reached. Please retry later."
-        elif (
-            "Request too large" in error_text
-            or "413" in error_text
-            or "tokens per minute" in error_text
-        ):
-            comments = "Validation request exceeds model token limits. Reduce SOP size or retrieved context."
-        else:
-            comments = f"Validation Error: {error_text}"
+        try:
+            llm = get_llm_provider()
+            if hasattr(llm, "map_exception"):
+                comments = llm.map_exception(e)
+            else:
+                comments = f"{provider_name} request failed: {error_text}"
+        except Exception:
+            comments = f"{provider_name} request failed: {error_text}"
+
+        token_count = getattr(e, "token_count", {
+            "INPUT": 0,
+            "OUTPUT": 0,
+            "TOTAL": 0
+        })
 
         if detailed:
             return [
@@ -785,11 +1093,7 @@ def validate_sop(sop_text, reference_context, detailed=False):
                     "SCORE_BREAKDOWN": {},
                     "COMMENTS": comments,
                     "REFERENCE": "System Error (Page N/A)",
-                    "TOKEN_COUNT": {
-                        "INPUT": 0,
-                        "OUTPUT": 0,
-                        "TOTAL": 0
-                    }
+                    "TOKEN_COUNT": token_count
                 }
             ]
         else:

@@ -6,3 +6,6 @@ sentence-transformers
 qdrant-client
 groq
 python-dotenv
+openai
+google-genai
+ollama
