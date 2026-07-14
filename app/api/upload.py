@@ -8,8 +8,8 @@ from app.parser.pdf_parser import (
     extract_pdf_pages
 )
 
-from app.parser.docx_to_pdf import (
-    convert_docx_to_pdf
+from app.parser.docx_parser import (
+    extract_docx_pages
 )
 
 from app.rag.vector_store import store_document
@@ -85,30 +85,12 @@ async def upload_standard(
                 "Detected DOCX guideline"
             )
 
-            pdf_path = file_path.replace(
-                ".docx",
-                ".pdf"
+            pages = extract_docx_pages(
+                file_path
             )
 
             logger.info(
-                f"Converting DOCX to PDF: {pdf_path}"
-            )
-
-            convert_docx_to_pdf(
-                file_path,
-                pdf_path
-            )
-
-            logger.info(
-                "DOCX converted successfully"
-            )
-
-            pages = extract_pdf_pages(
-                pdf_path
-            )
-
-            logger.info(
-                f"Extracted {len(pages)} pages from converted PDF"
+                f"Extracted {len(pages)} pages from DOCX"
             )
 
             store_document(

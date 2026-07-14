@@ -5,19 +5,24 @@ from app.api.validate import router as validate_router
 
 import logging
 import os
+import sys
 
-os.makedirs(
-    "logs",
-    exist_ok=True
-)
+# Set up logging handlers dynamically
+handlers = [logging.StreamHandler()]
+
+try:
+    os.makedirs(
+        "logs",
+        exist_ok=True
+    )
+    handlers.append(logging.FileHandler("logs/app.log"))
+except Exception as e:
+    print(f"WARNING: Could not initialize file logging. Falling back to console-only logging. Error: {str(e)}", file=sys.stderr)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    handlers=[
-        logging.FileHandler("logs/app.log"),
-        logging.StreamHandler()
-    ]
+    handlers=handlers
 )
 
 logger = logging.getLogger(__name__)

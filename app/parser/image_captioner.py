@@ -70,9 +70,9 @@ def generate_image_caption(image_path):
             f"Generating caption for image: {image_path}"
         )
 
-        with Image.open(image_path) as image:
+        with Image.open(image_path) as raw_image:
 
-            image = image.convert(
+            image = raw_image.convert(
                 "RGB"
             )
 
@@ -80,11 +80,6 @@ def generate_image_caption(image_path):
                 image,
                 return_tensors="pt"
             )
-
-        inputs = processor(
-            image,
-            return_tensors="pt"
-        )
 
         output = model.generate(
             **inputs,

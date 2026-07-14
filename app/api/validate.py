@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from fastapi import UploadFile
 from fastapi import File
 
-from app.parser.docx_to_pdf import convert_docx_to_pdf
+from app.parser.docx_parser import extract_docx_text
 
 from app.parser.pdf_parser import extract_pdf_text
 
@@ -57,22 +57,12 @@ async def validate(
 
         elif filename.endswith(".docx"):
 
-            pdf_path = file_path.replace(
-                ".docx",
-                ".pdf"
-            )
-
             logger.info(
-                "Converting DOCX to PDF"
+                "Extracting DOCX text directly"
             )
 
-            convert_docx_to_pdf(
-                file_path,
-                pdf_path
-            )
-
-            sop_text = extract_pdf_text(
-                pdf_path
+            sop_text = extract_docx_text(
+                file_path
             )
             
         else:
@@ -172,22 +162,12 @@ async def validate_detailed(
 
         elif filename.endswith(".docx"):
 
-            pdf_path = file_path.replace(
-                ".docx",
-                ".pdf"
-            )
-
             logger.info(
-                "Converting DOCX to PDF"
+                "Extracting DOCX text directly"
             )
 
-            convert_docx_to_pdf(
-                file_path,
-                pdf_path
-            )
-
-            sop_text = extract_pdf_text(
-                pdf_path
+            sop_text = extract_docx_text(
+                file_path
             )
             
         else:

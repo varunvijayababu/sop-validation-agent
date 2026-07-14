@@ -2,8 +2,8 @@ import sys
 import os
 from unittest.mock import MagicMock, patch
 
-# Add workspace root to sys.path
-sys.path.insert(0, r"c:\Users\varun\Downloads\Project\sop-validator")
+# Add workspace root to sys.path dynamically
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Mock the inner SDK clients before importing adapters
 # Groq client mock
